@@ -1,0 +1,19 @@
+{
+  "name": "browserless-export",
+  "description": "Exported package from browserless, ready to go!",
+  "version": "1.0.0",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@sparticuz/chromium": "^130.0.0",
+    "add": "^2.0.6",
+    "md5": "^2.3.0",
+    "node-xlsx": "^0.24.0",
+    "puppeteer": "^23.6.1",
+    "puppeteer-core": "^23.6.1",
+    "puppeteer-extra": "^3.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2",
+    "redis": "^4.7.0"
+  }
+}

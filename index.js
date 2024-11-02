@@ -8,9 +8,9 @@ const xlsx = require('node-xlsx').default;
 
 (async () => {
 
-  const filename = "河海大学电气学院";
-  const url = "https://dqxy.ahu.edu.cn/6130/list.htm";
-  const selector = ".wp_articlecontent a";
+  const filename = "兰州交通大学";
+  const url = "https://xnyxy.lzjtu.edu.cn/szdw.htm";
+  const selector = ".right table:nth-child(2) a";
   const button = "middle";
   const next_page_element = null;
 
@@ -18,37 +18,20 @@ const xlsx = require('node-xlsx').default;
     .on('error', err => console.log('Redis Client Error', err))
     .connect();
 
-
   // puppeteer.use(StealthPlugin());
+
   const browser = await puppeteer.launch({
-    headless: false,
-    executablePath: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    headless: true,
+    executablePath: puppeteer.executablePath('chrome'),
     ignoreHTTPSErrors: true,
-    useAutomationExtension: false,
-    args: [ "--no-sandbox", "--disable-setuid-sandbox" ],
+    args: [ "--no-sandbox", "--disable-setuid-sandbox", '--disable-infobars', '--window-position=0,0', '--ignore-certificate-errors', '--ignore-certificate-errors', '--ignore-certificate-errors-spki-list', ],
   },);
 
-  const page = await browser.newPage();
-  await page.evaluateOnNewDocument(() => {
-    delete navigator.__proto__.webdriver;
-  });
-  await page.evaluateOnNewDocument(() => {
-    const newProto = navigator.__proto__;
-    delete newProto.webdriver;
-    navigator.__proto__ = newProto;
-  });
-  await page.setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3");
+  let homepage_context = await browser.createBrowserContext();
+  const page = await homepage_context.newPage();
+  await page_inject(page);
 
-  await page.setRequestInterception(true);
-  page.on('request', (req) => {
-    if(req.resourceType() === 'image'){
-      req.abort();
-    }else {
-      req.continue();
-    }
-  });
-
-  browser.on('targetcreated', async e => {
+  homepage_context.on('targetcreated', async e => {
     console.log(e.url());
 
     if (e.url()) {
@@ -68,12 +51,9 @@ const xlsx = require('node-xlsx').default;
       if (page1) {
         try {
           const latest_name = await client.get("latest");
-          await client.lPush("mapped", JSON.stringify({ url: e.url(), name: latest_name }));
-
-          // await page1.waitForNetworkIdle();
-          // await new Promise(resolve => setTimeout(resolve, 1500));
-          // const content = await page1.evaluate(() => document.body.innerText)
-          // await client.set(e.url(), content);
+          await client.zAdd("mapped", {
+            score: 0, value: JSON.stringify({ url: e.url(), name: latest_name })
+          });
           await client.del("latest")
           await page1.close();
         } catch (e) {
@@ -85,27 +65,27 @@ const xlsx = require('node-xlsx').default;
   });
 
   await start({ page, client, url, selector, button, next_page_element });
+  await homepage_context.close();
 
-  await new Promise(resolve => setTimeout(resolve, 3000));
-
-  browser.removeAllListeners('targetcreated');
   await build_data(browser, client, filename);
 
-  await browser.close()
+  await browser.close();
+  await client.disconnect();
 
 })()
   .then(() => console.log('Script complete!'))
-  .catch((err) => console.error('Error running script' + err));
-
+  .catch((err) => console.error('Error running script' + err))
+  .finally(() => process.exit());
 
 async function build_data(browser, client, filename) {
-  const mapping = await client.lRange("mapped", 0, -1)
+  const mapping = await client.zRange("mapped", 0, -1)
 
   const email_regex = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/gm
 
   const users = [];
   let context = await browser.createBrowserContext();
-  const promise_tasks = [];
+
+  let promise_tasks = [];
   let i = 0;
   for (let map of mapping) {
     const user = [];
@@ -113,44 +93,16 @@ async function build_data(browser, client, filename) {
 
     const { url, name } = JSON.parse(map);
     user.push(name);
-    // const content = await client.get(url);
-    // await client.del(url);
+
     promise_tasks.push(context.newPage().then(async page => {
-      await page.evaluateOnNewDocument(() => {
-        delete navigator.__proto__.webdriver;
-      });
-      await page.evaluateOnNewDocument(() => {
-        const newProto = navigator.__proto__;
-        delete newProto.webdriver;
-        navigator.__proto__ = newProto;
-      });
-      await page.setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3");
       page.setDefaultNavigationTimeout(0);
       page.setDefaultTimeout(0);
-      page.once('dialog', dialog => {
-        console.log(dialog.message());
-        console.log("Dismissing " + dialog.type());
-        dialog.dismiss();
-      });
-      await page.setRequestInterception(true);
-      page.on('request', (req) => {
-        if(req.resourceType() == 'stylesheet' || req.resourceType() == 'font' || req.resourceType() == 'image'){
-          // page.evaluate(() => {
-          //   [...document.getElementsByTagName('img')].forEach(e => e.onerror = null)
-          // })
-          req.abort();
-        }else {
-          req.continue();
-        }
-      });
-      const response = await page.goto(url);
-      try {
-        await Promise.any([
-          page.waitForNetworkIdle(),
-          new Promise(resolve => setTimeout(resolve, 5000))
-        ])
+      await page_inject(page);
 
-        const content = await page.evaluate(() => document.body.innerText);
+      await page.goto(url, { waitUntil: 'networkidle0', timeout: 13000 });
+      try {
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        const content = await page.$eval("body", el => el.innerText);
 
         await page.close();
         if (content) {
@@ -162,16 +114,17 @@ async function build_data(browser, client, filename) {
           }
         }
       } catch (e) {
-        console.error(e);
+        console.error(e, url);
       }
-
 
       user.push(null);
       user.push(url);
     }));
 
     if (++i % 20 === 0) {
-      await new Promise(resolve => setTimeout(resolve, 10000));
+      await Promise.all(promise_tasks);
+      promise_tasks = [];
+      await new Promise(resolve => setTimeout(resolve, 5000));
     }
   }
   await Promise.all(promise_tasks);
@@ -180,4 +133,33 @@ async function build_data(browser, client, filename) {
   await client.del("mapped");
   const buffer = xlsx.build([ { name: 'sheet1', data: users } ]);
   fs.writeFileSync(`${ filename }.xlsx`, buffer);
+}
+
+async function page_inject(page) {
+  await page.evaluateOnNewDocument(() => {
+    delete navigator.__proto__.webdriver;
+  });
+  await page.evaluateOnNewDocument(() => {
+    const newProto = navigator.__proto__;
+    delete newProto.webdriver;
+    navigator.__proto__ = newProto;
+  });
+  await page.evaluateOnNewDocument(() => {
+    [ ...document.getElementsByTagName('img') ].forEach(i => i.onerror = null);
+  });
+  page.once('dialog', dialog => {
+    console.log(dialog.message());
+    console.log("Dismissing " + dialog.type());
+    dialog.dismiss();
+  });
+  await page.setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3");
+  await page.setRequestInterception(true);
+  page.on('request', (req) => {
+    if (req.resourceType() === 'font' || req.resourceType() === 'image') {
+      req.abort();
+    } else {
+      req.continue();
+    }
+  });
+  return page;
 }

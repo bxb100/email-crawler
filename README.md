@@ -1,11 +1,20 @@
-# Browserless Starter-pack
-This simple starter-pack gets you up and running with all the code you used in the debugger. Just install and run!
+# 通用的院校教师邮箱抓取
 
-## Requirements
-- NodeJS (version 12 or higher).
-- An environment to run command's (Terminal or others).
+虽然还有更简单的方案, 但是这个方案目前看起来最通用
 
-## Running
-1. NodeJS >= 12 is installed
-2. 'npm install'
-3. 'npm start'
+## 流程
+
+1. 获取教师详情页链接, 利用 redis 来做一个 lock free
+2. 然后重建一个 context, 批量重新 fetch 详情页
+3. 获取正文, 然后用 regex 来获取邮箱 (所以有的页面没有邮箱, 但是 footer 有院长邮箱, 导致出现问题)
+4. 保存到 Excel 中
+
+## 出现的问题
+
+- `stealth` 大部分对于院校的防爬虫是无用的, 但是 `delete webdriver` 还是有用的
+- 有的详情页会直接弹出 dialog
+- 有的页面 img onerror 塞入的图片是个 404
+- 有的页面会先 416, 然后设置 cookie 重新跳转, 不满足条件直接报 400
+- 有的学校教师的联系方式请求是 N + 1, 所以直接匹配 body text 不是个通用的方案
+- `networkidle0` 一般来说是最佳的通用等待方案, 除了上面 onerror 的无限循环
+- 大部分院校系教师列表都是 unique 的, 但是有的会博导, 硕导这样分配导致重复, 这个使用 `zset` 来保证唯一性

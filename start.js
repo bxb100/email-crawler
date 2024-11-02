@@ -2,8 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.default = async ({ page, client, url, selector, button = 'middle', next_page_element }) => {
 
-  await page.goto(url);
-  await page.waitForNetworkIdle();
+  await page.goto(url, { waitUntil: 'networkidle0' });
 
   await handle(page, client, selector, button, null);
   if (next_page_element) {
@@ -56,7 +55,13 @@ async function handle(page, client, selector, button, page_hash) {
       await client.set('latest', name);
       try {
         await element.click(options);
+        const now = process.hrtime.bigint();
         while (await client.get('latest')) {
+          // 10s
+          if (process.hrtime.bigint() - now > 10000000000) {
+            console.log('Timeout', name);
+            break;
+          }
           await new Promise(resolve => setTimeout(resolve, 300));
         }
       } catch (e) {

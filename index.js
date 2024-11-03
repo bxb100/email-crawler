@@ -21,10 +21,21 @@ const xlsx = require('node-xlsx').default;
   // puppeteer.use(StealthPlugin());
 
   const browser = await puppeteer.launch({
-    headless: true,
+    headless: false,
     executablePath: puppeteer.executablePath('chrome'),
     ignoreHTTPSErrors: true,
-    args: [ "--no-sandbox", "--disable-setuid-sandbox", '--disable-infobars', '--window-position=0,0', '--ignore-certificate-errors', '--ignore-certificate-errors', '--ignore-certificate-errors-spki-list', ],
+    args: [
+      "--disable-gpu",
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      '--disable-infobars',
+      '--window-position=0,0',
+      '--ignore-certificate-errors',
+      '--ignore-certificate-errors',
+      '--ignore-certificate-errors-spki-list',
+      "--disable-dev-shm-usage",
+      "--disable-blink-features=AutomationControlled",
+    ],
   },);
 
   let homepage_context = await browser.createBrowserContext();
@@ -102,6 +113,10 @@ async function build_data(browser, client, filename) {
       await page.goto(url, { waitUntil: 'networkidle0', timeout: 13000 });
       try {
         await new Promise(resolve => setTimeout(resolve, 3000));
+
+        const md = await fetchAndProcessPage(page);
+        await client.set(url, md);
+
         const content = await page.$eval("body", el => el.innerText);
 
         await page.close();
@@ -162,4 +177,54 @@ async function page_inject(page) {
     }
   });
   return page;
+}
+
+async function fetchAndProcessPage(page, enableDetailedResponse) {
+  return await page.evaluate((enableDetailedResponse) => {
+    function extractArticleMarkdown() {
+      const readabilityScript = document.createElement('script');
+      readabilityScript.src = 'https://unpkg.com/@mozilla/readability/Readability.js';
+      document.head.appendChild(readabilityScript);
+
+      const turndownScript = document.createElement('script');
+      turndownScript.src = 'https://unpkg.com/turndown/dist/turndown.js';
+      document.head.appendChild(turndownScript);
+
+      let md = 'no content';
+
+      // Wait for the libraries to load
+      md = Promise.all([
+        new Promise((resolve) => (readabilityScript.onload = resolve)),
+        new Promise((resolve) => (turndownScript.onload = resolve)),
+      ]).then(() => {
+        // Readability instance with the current document
+        const reader = new Readability(document.cloneNode(true), {
+          charThreshold: 0,
+          keepClasses: true,
+          nbTopCandidates: 500,
+        });
+
+        // Parse the article content
+        const article = reader.parse();
+
+        // Turndown instance to convert HTML to Markdown
+        const turndownService = new TurndownService();
+
+        let documentWithoutScripts = document.cloneNode(true);
+        documentWithoutScripts.querySelectorAll('script').forEach((browserItem) => browserItem.remove());
+        documentWithoutScripts.querySelectorAll('style').forEach((browserItem) => browserItem.remove());
+        documentWithoutScripts.querySelectorAll('iframe').forEach((browserItem) => browserItem.remove());
+        documentWithoutScripts.querySelectorAll('noscript').forEach((browserItem) => browserItem.remove());
+
+        // article content to Markdown
+        const markdown = turndownService.turndown(enableDetailedResponse ? documentWithoutScripts : article.content);
+
+        return markdown;
+      });
+
+      return md;
+    }
+
+    return extractArticleMarkdown();
+  }, enableDetailedResponse);
 }

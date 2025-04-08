@@ -30,3 +30,4 @@
     - 先获得所有用户, url 的 json
     - 然后根据 DOM 生成对应的 python 脚本
     - 执行生成给用户
+- 使用 [crawl4ai](https://github.com/unclecode/crawl4ai) 微调 prompt 解析详情页效果还不错, 但是消耗 token 较多

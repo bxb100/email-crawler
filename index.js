@@ -11,7 +11,10 @@ const xlsx = require('node-xlsx').default;
 	const filename = "储运与建筑工程学院";
 	const url = "https://cj.upc.edu.cn/szdw/list.htm";
 	const selector = "#teacherBox li";
+	const removeSelector = "#footer";
+	const departmentPrefix = "当前位置：首页";
 	const button = "middle";
+
 	const next_page_element = null;
 
 	const client = await createClient()
@@ -67,7 +70,7 @@ const xlsx = require('node-xlsx').default;
 	await start({ page, client, url, selector, button, next_page_element });
 	await homepage_context.close();
 
-	await build_data(browser, client, filename);
+	await build_data(browser, client, filename, removeSelector, departmentPrefix);
 
 	await browser.close();
 	await client.disconnect();
@@ -77,7 +80,7 @@ const xlsx = require('node-xlsx').default;
 	.catch((err) => console.error('Error running script' + err))
 	.finally(() => process.exit());
 
-async function build_data(browser, client, filename) {
+async function build_data(browser, client, filename, removeSelector, departmentPrefix) {
 	const email_regex = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/gm
 	const users = [];
 
@@ -87,15 +90,12 @@ async function build_data(browser, client, filename) {
 	let promise_tasks = [];
 	let i = 0;
 
-
 	for (let map of mapping) {
-		const user = [];
-		users.push(user);
-
 		const { url, name } = JSON.parse(map);
-		user.push(name);
 
 		promise_tasks.push(new Promise(async (resolve) => {
+			const user = [];
+			user.push(name);
 			let content = await client.get(url);
 			if (!content) {
 				try {
@@ -105,6 +105,10 @@ async function build_data(browser, client, filename) {
 					await page_inject(page);
 					await page.goto(url, { waitUntil: 'networkidle0', timeout: 13000 });
 					await new Promise(resolve => setTimeout(resolve, 3000));
+
+					if (removeSelector) {
+						await page.evaluate(`document.querySelectorAll('${ removeSelector }').forEach(e => e.remove())`);
+					}
 
 					content = await page.$eval("body", el => el.innerText);
 					const md = await fetchAndProcessPage(page);
@@ -122,35 +126,41 @@ async function build_data(browser, client, filename) {
 				} else {
 					user.push(null);
 				}
-				const department = content.match(/当前位置：首页\s*(.+)/gm);
-				if (department && department.length > 0) {
-					user.push(department[0].replace(/当前位置：首页/g, "").trim());
-				}else {
+
+				if (departmentPrefix) {
+					const department = content.match(new RegExp(`${ departmentPrefix }\\s*(.+)`, "gm"));
+					if (department && department.length > 0) {
+						user.push(department[0].replace(new RegExp(`${ departmentPrefix }`), "").trim());
+					} else {
+						user.push(null);
+					}
+				} else {
 					user.push(null);
 				}
-
 				user.push(url);
-				resolve()
-				return;
+				return resolve(user);
+			} else {
+				user.push(null);
+				user.push(null);
+				user.push(url);
+				return resolve(user);
 			}
-			user.push(null);
-			user.push(null);
-			user.push(url);
-			resolve()
 		}))
 
-    if (++i % 20 === 0) {
-      await Promise.all(promise_tasks);
-      promise_tasks = [];
-      await new Promise(resolve => setTimeout(resolve, 5000));
-    }
-  }
-  await Promise.all(promise_tasks);
-  await context.close();
+		if (++i % 20 === 0) {
+			const taskResults = await Promise.all(promise_tasks);
+			users.push(...taskResults);
+			promise_tasks = [];
+			await new Promise(resolve => setTimeout(resolve, 5000));
+		}
+	}
+	const taskResults = await Promise.all(promise_tasks);
+	users.push(...taskResults);
+	await context.close();
 
-  await client.del("mapped");
-  const buffer = xlsx.build([ { name: 'sheet1', data: users } ]);
-  fs.writeFileSync(`${ filename }.xlsx`, buffer);
+	await client.del("mapped");
+	const buffer = xlsx.build([ { name: 'sheet1', data: users } ]);
+	fs.writeFileSync(`${ filename }.xlsx`, buffer);
 }
 
 async function page_inject(page) {
@@ -195,17 +205,12 @@ async function fetchAndProcessPage(page, enableDetailedResponse) {
 
 			let md = 'no content';
 
-      // Wait for the libraries to load
-      md = Promise.all([
-        new Promise((resolve) => (readabilityScript.onload = resolve)),
-        new Promise((resolve) => (turndownScript.onload = resolve)),
-      ]).then(() => {
-        // Readability instance with the current document
-        const reader = new Readability(document.cloneNode(true), {
-          charThreshold: 0,
-          keepClasses: true,
-          nbTopCandidates: 500,
-        });
+			// Wait for the libraries to load
+			md = Promise.all([ new Promise((resolve) => (readabilityScript.onload = resolve)), new Promise((resolve) => (turndownScript.onload = resolve)), ]).then(() => {
+				// Readability instance with the current document
+				const reader = new Readability(document.cloneNode(true), {
+					charThreshold: 0, keepClasses: true, nbTopCandidates: 500,
+				});
 
 				// Parse the article content
 				const article = reader.parse();
